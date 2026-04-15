@@ -7,7 +7,7 @@
     "control_refset": "path/to/control_reset.json",
     "exon_bed": "path/to/exons.bed",
     "cds_fasta": "path/to/cds.fasta",
-    "cosmic_variants": "path/to/cosmic.tsv"
+    "target_variants": "path/to/target_variants.tsv"
   },
   "parameters": {
     "UMI_cutoff": 1,
