@@ -1,0 +1,19 @@
+{
+  "paths": {
+    "input": "/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/RCA_cfDNA_standards/Alignment_Metrics_UpdatedStrandInfo/9_UMI_grouped/",
+    "output": "",
+    "bedfile": "/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/Michaels_test_folder/Target_regions_specific.bed",
+    "genome": "/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/Genomes/ncbi_dataset/ncbi_dataset/data/GCF_000001405.26/GCF_000001405.26_GRCh38_genomic.fna",
+    "control_refset": "path/to/control_reset.json",
+    "exon_bed": "path/to/exons.bed",
+    "cds_fasta": "path/to/cds.fasta",
+    "cosmic_variants": "path/to/cosmic.tsv"
+  },
+  "parameters": {
+    "UMI_cutoff": 1,
+    "UMI_proportion": 0.66,
+    "strand_bias_threshold": 0.05,
+    "minimum_coverage": 500,
+    "minimum_vaf": 0.001
+  }
+}
