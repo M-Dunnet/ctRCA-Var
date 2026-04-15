@@ -49,7 +49,7 @@ def parse_args():
                         help='Path string to the location of an exon boundary bedfile. Will determine if variants are in coding regions')
     parser.add_argument('--cds_fasta', '-cds', type=str, action='store',
                         help='Path string to the location of canonical CDS sequences')
-    parser.add_argument('--cosmic_variants', '-cv', type=str, action='store',
+    parser.add_argument('--target_variants', '-tv', type=str, action='store',
                         help='Path string to the location of the COSMIC variants filter file (See `Generate_Cosmic_filters` for formatting)')
 
     # Processing parameters
