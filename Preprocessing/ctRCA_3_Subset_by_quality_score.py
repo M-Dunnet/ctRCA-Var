@@ -23,8 +23,8 @@ def parse_args():
 	                    help='The directory location containing input Fasta files')
 	parser.add_argument('output', type=str, action='store', default='',
 	                    help='The directory location where files will end up. Defaults to the input directory')
-	parser.add_argument('--min_quality', '-q', type=int, action='store', default=20,
-	                    help='Minimum average Phred quality for filtered reads. Defaults to 20')
+	parser.add_argument('--min_quality', '-q', type=int, action='store', default=15,
+	                    help='Minimum average Phred quality for filtered reads. Defaults to 15')
 	parser.add_argument('--split', action='store_true', default=False,
 	                    help='Turns on split mode. This will split reads into multiple files based upon quality score')
 	parser.add_argument('--split_min', type=int, action='store', default=20,
