@@ -1,16 +1,38 @@
 #!/bin/bash
 
-# Directory containing your FASTA files
-INPUT_DIR="/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/RCA_cfDNA_standards/Alignment_Metrics_UpdatedStrandInfo/Repeat-Level-Analysis/"
-OUTPUT_DIR="/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/RCA_cfDNA_standards/Alignment_Metrics_UpdatedStrandInfo/Repeat-Level-Analysis/Adapter_Trim/"
+# Usage: ./trim_adapters.sh <input_dir> <output_dir>
+
+set -e
+
+# Check arguments
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <input_dir> <output_dir>"
+    exit 1
+fi
+
+INPUT_DIR="$1"
+OUTPUT_DIR="$2"
+
+# Check input directory exists
+if [ ! -d "$INPUT_DIR" ]; then
+    echo "Error: Input directory does not exist: $INPUT_DIR"
+    exit 1
+fi
+
+# Create output directory if needed
 mkdir -p "$OUTPUT_DIR"
+
+echo "Input directory:  $INPUT_DIR"
+echo "Output directory: $OUTPUT_DIR"
+echo ""
 
 # Loop through all .fasta files
 for file in "$INPUT_DIR"/*.fasta; do
-    # Get sample name without extension
+    # Skip if no files match
+    [ -e "$file" ] || continue
+
     sample=$(basename "$file" .fasta)
 
-    # Define outputs
     trimmed="$OUTPUT_DIR/${sample}.trimmed.fasta"
     untrimmed="$OUTPUT_DIR/${sample}.untrimmed.fasta"
 
@@ -23,4 +45,5 @@ for file in "$INPUT_DIR"/*.fasta; do
         "$file"
 done
 
+echo ""
 echo "All samples processed!"
