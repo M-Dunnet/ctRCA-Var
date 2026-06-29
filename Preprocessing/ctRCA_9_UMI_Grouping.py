@@ -29,29 +29,22 @@ def hamming_distance(seq1, seq2):
     return sum(el1 != el2 for el1, el2 in zip(seq1, seq2))
 
 
-def select_representative_umi(g, component):
+def select_representative_umi(cluster_umis, umi_to_reads):
     """
     Select a representative UMI from a cluster based on frequency, lowest total 
     Hamming distance to others or lexicographical order
     """
-    ## Get read IDs and UMIs in the cluster
-    cluster_reads = list(component)
-    cluster_umis = [g.nodes[r]['umi'] for r in component]
-    
-    ## Count UMI frequencies
-    umi_counts = Counter(cluster_umis)
+    ## Count UMI frequencies based on how many reads had that UMI
+    umi_counts = {umi: len(umi_to_reads[umi]) for umi in cluster_umis}
     max_count = max(umi_counts.values())
     candidates = [umi for umi, count in umi_counts.items() if count == max_count]
     
-    ## If one UMI is clearly dominant chose that one
     if len(candidates) == 1: 
         return candidates[0]
     
-    ## Check that all UMIs have same frequency and there are 3 or fewer candidates, is so choose first UMI
     if len(set(umi_counts.values())) == 1 and len(candidates) <= 3: 
-        return candidates[0]
+        return sorted(candidates)[0] # Sort to ensure deterministic selection
     
-    ## Otherwise calculate total Hamming distances and choose UMI with lowest distance to all others
     min_distance = float('inf')
     representative_umi = None
     for umi in candidates:
@@ -83,31 +76,34 @@ def cluster_umi_groups(group_id, read_umi_pairs):
     """
     Cluster UMIs within a group by Hamming distance <= 1 to account for sequencing errors.
     """
-    ## Add nodes and edges based on UMI similarity // Create a dict to map UMIs to read IDs
-    g = nx.Graph()
+
     umi_to_reads = defaultdict(list)
     for read_id, umi in read_umi_pairs:
-        g.add_node(read_id, umi=umi)
         umi_to_reads[umi].append(read_id)
     
-    ## Connect all reads with identical UMIs 
-    for umi, reads in umi_to_reads.items():
-        for r1, r2 in itertools.combinations(reads, 2):
-            g.add_edge(r1, r2)
-        
-        # Connect reads with UMIs differing by 1. Neighbours are generated and checked against existing UMIs
-        for neighbor in generate_hamming_neighbors(umi):
-            if neighbor in umi_to_reads:
-                for r1 in reads:
-                    for r2 in umi_to_reads[neighbor]:
-                        g.add_edge(r1, r2)
+    g = nx.Graph()
+    # 1. Add nodes for UNIQUE UMIs, not individual reads
+    for umi in umi_to_reads:
+        g.add_node(umi)
     
-    ## For each cluster/connected set of nodes, find the UMI that is representative of the group
+    # 2. Connect unique UMIs differing by 1 base
+    for umi in umi_to_reads:
+        for neighbor in generate_hamming_neighbors(umi):
+            if neighbor in umi_to_reads and neighbor != umi:
+                g.add_edge(umi, neighbor)
+    
     clusters = {}
     for component in nx.connected_components(g):
-        cluster_reads = list(component)
-        representative_umi = select_representative_umi(g, component)
+        cluster_umis = list(component)
+        # Pass the unique UMIs and the mapping dict to the selection function
+        representative_umi = select_representative_umi(cluster_umis, umi_to_reads)
         representative_umi = f"{representative_umi}_{group_id[0]}_{group_id[1]}"
+        
+        # Aggregate all reads belonging to all UMIs in this component
+        cluster_reads = []
+        for umi in cluster_umis:
+            cluster_reads.extend(umi_to_reads[umi])
+            
         clusters[representative_umi] = cluster_reads
 
     return clusters
@@ -146,14 +142,14 @@ def inital_umi_collection(bam):
         ## Group reads by strand and start position (with buffer for misalignments)
         found_key = None
         for pos in range(start - buffer, start + buffer + 1):
-            key = (strand, f"{chromosome}:{start}")
+            key = (strand, f"{chromosome}:{pos}")
             if key in read_groups:
                 found_key = key
                 break
         if found_key:
             read_groups[found_key].append((read_id, umi))
         else:
-            read_groups[(strand, f"{chromosome}:{pos}")].append((read_id, umi))
+            read_groups[(strand, f"{chromosome}:{start}")].append((read_id, umi))
 
     return read_groups
 
@@ -165,30 +161,28 @@ def process_bam(input_bam, output_bam):
     Read ID and UMI are stored as a tuple in the dict values -> cluster UMIs and account for errors in sequening with hamming distance
     Get a representative UMI for each cluster -> rewrite BAM file with representative UMI tags as UB:Z
     """
-    ## Group reads by strand and start position and identify inital UMI seqeunces
     result = inital_umi_collection(input_bam) 
 
-    ## Cluster UMIs in each group by hamming distance representative UMI for each family
-    global_clusters = {}
+    ## Cluster UMIs in each group
+    read_to_umi = {}
     for key in result:
         clusters = cluster_umi_groups(key, result[key])
-        global_clusters.update(clusters)
+        for umi, read_ids in clusters.items():
+            for read_id in read_ids:
+                read_to_umi[read_id] = umi
+
+    # Free the initial grouping dictionary immediately to cut RAM usage in half
+    del result 
 
     ## Rewrite BAM file with representative UMI tags as UB:Z
     with pysam.AlignmentFile(input_bam, "rb") as infile, \
          pysam.AlignmentFile(output_bam, "wb", header=infile.header) as outfile:
-        
-        ## Invert clusters dict: read_id -> representative UMI
-        read_to_umi = {read_id: umi for umi, read_ids in global_clusters.items() for read_id in read_ids}
 
-        ## Rewrite BAM file with representative UMI tags as UB:Z
         for read in infile: 
             if read.query_name in read_to_umi:
-                umi = read_to_umi[read.query_name]
-                read.set_tag("UB", umi, value_type="Z")
-            else:
-                continue
+                read.set_tag("UB", read_to_umi[read.query_name], value_type="Z")
             outfile.write(read)
+ 
 
 
 def argument_parser():
@@ -210,10 +204,6 @@ if __name__ == "__main__":
     ## Check output bam
     if not args.output_bam.endswith(".bam"):
         raise ValueError("Output file must be a BAM file with .bam extension")
-    
-    # output_dir = os.path.dirname(args.output_bam)
-    # if not os.path.exists(output_dir):
-    #     os.makedirs(output_dir, exist_ok=True)
 
     process_bam(args.input_bam, args.output_bam)
 
