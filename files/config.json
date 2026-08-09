@@ -1,1 +1,27 @@
+{
 
+  "paths": {
+    "input": "",
+    "output": "",
+    "bedfile": "/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/Michaels_test_folder/TargetRegions505.bed",
+    "genome": "/projects/health_sciences/bms/biochemistry/guilford_group/MichaelDunnet/Genomes/ncbi_dataset/ncbi_dataset/data/GCF_000001405.26/GCF_000001405.26_GRCh38_genomic.fna",
+    
+    "snp_controls": "files/Reference_Config/snp_ctrls.json",
+    "snp_targets": "files/Target_Mutations/Substitution_variants.csv",
+    "del_controls": "files/Reference_Config/deletion_ctrls.json",
+    "del_targets": "files/Target_Mutations/Deletion_variants.csv",
+    "ins_controls": "files/Reference_Config/insertion_ctrls.json",
+    "ins_targets": "files/Target_Mutations/Insertion_variants.csv",
+    
+    "exon_bed": "path/to/exons.bed",
+    "cds_fasta": "path/to/cds.fasta",
+    "cosmic_variants": "path/to/cosmic.tsv"
+  },
+  "parameters": {
+    "UMI_cutoff": 1,
+    "UMI_proportion": 0.66,
+    "strand_bias_threshold": 0.05,
+    "minimum_coverage": 500,
+    "minimum_vaf": 0.001
+  }
+}
