@@ -3,54 +3,6 @@ ctDNA variant caller for RCA consensus called data.
 
 This pipeline assumes that target enrichment of ctDNA moleucles has been performed with the QIASeq-pro panel, that circularisation + RCA was performed using the R2C2 protocol, and that consensus calling was peformed with either C3POa or BB-8
 
-## Requirements
-Mutliple supporting files are needed to run ctRCA-Var:
-- Genome file in fasta format
-- Target regions in BED format
-- Exon locations of target genes in BED format
-- Target gene coding sequence in fasta format
-- List of known variants in tsv format
-- primer binding locations in BED format
-- Primer sequnces in tsv format
-
-A minimap2 executable are requried to run the full pipeline, as well as several pip installables.
-
-### Obtaining supporting files
-See `obtaining supporting files` MarkDown for information
-
-### Pip installables
-The following modules are required:
-- cutadapt
-- numpy
-- pandas
-- pysam
-- pyfaidx
-- matplotlib
-- seaborn
-
-Install these requirements with pip:
-
-```
-python3 -m venv venv
-source venv/bin/activate
-venv/bin/pip --upgrade pip
-venv/bin/pip install cutadapt
-venv/bin/pip install numpy
-venv/bin/pip install pandas
-venv/bin/pip install pysam
-venv/bin/pip install pyfaidx
-venv/bin/pip install matplotlib
-venv/bin/pip install seaborn
-```
-
-### minimap2 installation
-To Download, visit the releases page of the GitHub repository, and download the pre-compiled binary (https://github.com/lh3/minimap2/releases).
-Before minimap2 can be used, the target genome needs to be indexed:
-
-```
-./minimap2 -d <genome_index.mmi> <genome.fasta>
-```
-
 ## Pipeline overview
 
 This pipeline is designed for consensus called nanopore reads from BB-8 (or C3POa) as input. ctRCA-Var outputs mutation annotation format tsv files at the end of the pipeline.
