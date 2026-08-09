@@ -1,22 +1,18 @@
 
 ## Load Imports
 import argparse
-import platform
+import subprocess
 import time
 import sys
 import os
-import json
-import pysam
-import numpy as np
 import pandas as pd
-from pyfaidx import Fasta
+import pathlib as Path
 
 ## ctRCA module imports
 from lib import ctRCA_Funcs as ctRCA
-from lib import ReferenceSet
-from lib import Alphas
-from lib import Dirichlet_Monte_Carlo as dmc
-# from lib import Dirichlet_monte_carlo_simulation    #TODO needs fixing
+from lib.Process_INDELS import process_dels, process_ins
+from lib.Process_SNPS import process_snps
+
 # from lib import Check_homopolymer_repeats    #TODO needs fixing
 # from lib import Exon_status    #TODO needs fixing
 # from lib import variant_zygostity    #TODO needs fixing
@@ -34,7 +30,7 @@ def parse_args():
     # Input and Output file locations
     parser.add_argument('--input', '-i', type=str, action='store',
                         help='The directory location containing input BAM files')
-    parser.add_argument('--output', '-o', type=str, action='store', default='',
+    parser.add_argument('--output', '-o', type=str, action='store', default=None,
                         help='The directory location where files will end up. Defaults to the input directory')
 
     # Optional arguments for additional files, will overwrite the config file paths
@@ -49,7 +45,7 @@ def parse_args():
                         help='Path string to the location of an exon boundary bedfile. Will determine if variants are in coding regions')
     parser.add_argument('--cds_fasta', '-cds', type=str, action='store',
                         help='Path string to the location of canonical CDS sequences')
-    parser.add_argument('--target_variants', '-tv', type=str, action='store',
+    parser.add_argument('--cosmic_variants', '-cv', type=str, action='store',
                         help='Path string to the location of the COSMIC variants filter file (See `Generate_Cosmic_filters` for formatting)')
 
     # Processing parameters
@@ -65,7 +61,7 @@ def parse_args():
     parser.add_argument('--minimum_coverage', '-c', type=int, action='store',
                         help='Sets the minimum read coverage when determining relevant mutations. Defaults to 50')
     parser.add_argument('--minimum_vaf', '-f', type=float, action='store',
-                        help='Sets the minimum frequency when determining relevant mutations. Defaults to 0.001 (0.1%)')
+                        help='Sets the minimum frequency when determining relevant mutations. Defaults to 0.001 (0.1%%)')
 
     return parser.parse_args()
 
@@ -79,77 +75,23 @@ def main(params):
     4) Filters variants based on potential pathogenicity using COSMIC and ClinVar databases
     5) Exports data in TSV format
     """
-    ## Init Genome file once
-    genome = Fasta(params['paths']['genome'])
+
     ## Collect all files in the input dircetory
     file_list = [params['paths']['input']+file for file in os.listdir(params['paths']['input']) if file.endswith('bam')]
 
     ## Iterate through files // TODO probably should run this in parelle processes...
     for i, file in enumerate(file_list, start=1):
-        # print(f"Working on file {i} of {len(file_list)}:")
-        # print(file)
+        print(f"Working on file {i} of {len(file_list)}")
+        
+        ## Process variants of each type
+        snp_variants = process_snps(params, file)
+        del_variants = process_dels(params, file)
+        ins_variants = process_ins(params, file)
 
-        # ## Construct refset for the test sample
-        # snp_refset = ReferenceSet.SNP_ReferenceSet(
-        #     file_path=file,
-        #     bed_path=params['paths']['bedfile'],
-        #     genome_path=params['paths']['genome'],
-        #     collapse_umi=True
-        # ).reference_set
+        all_variants = pd.concat([snp_variants, del_variants, ins_variants], ignore_index = True)
 
-        # #####
-        # ## TEMP just saving JSON files
-        # file_to_save = file.rsplit('/', 1)[1]
-        # with open(f"{file_to_save}_UMI1_pt2_reference_SNP_counts.json", "w") as f:
-        #     json.dump(snp_refset, f, indent=4)
-        ####
-        ## TEMP just using premade JSON files
-        with open('/home/dunmi18p/Python_Projects/RCA_Modelling_2/Ref1m_UMI1_reference_SNP_counts.json') as f:
-            snp_refset = json.load(f)
-        ####
-
-        ## Split the test sample RefSet into positions with potential mutations and positions without. 
-        target_positions, non_target_positions = ctRCA.split_refset_dict(snp_refset, "files/Target_Mutations/Sub_Mutations.csv")
-
-        ####################################################################################################
-        ## First, get target positions for candidate variants and then transform into VCF format 
-        ####################################################################################################
-        ## Remove strand information from the refset; specifcally in the target positions. 
-        target_refset = {
-            pos: ctRCA.collapse_strand_counts(counts)
-            for pos, counts in target_positions.items()
-        }
-
-        ## Convert into a PD.DataFrame; which will become the main VCF file going forward. 
-        vcf_df = ctRCA.refset_dict_to_vcf(target_refset, genome)
-        vcf_df = vcf_df[vcf_df["Depth"] >= 500] ## Remove variants with less than 500 total depth
-        vcf_df = vcf_df[vcf_df["Alt_Count"] >= 5]   ## Remove varients with less than 5 alternate counts.
-        vcf_df = vcf_df[vcf_df["Alt_Prop"] >= 0.001].reset_index(drop=True)    ## Remove variants with a VAF less than 0.001 (0.1%)
-
-        ## Load in BED file and use it to add gene information to the vcf_df
-        bedfile = ctRCA.load_bed(params['paths']['bedfile'])
-        vcf_df['Gene'] = vcf_df.apply(lambda row: ctRCA.annotate_gene(row, bedfile), axis=1)
-        print(vcf_df)
-        ####################################################################################################
-        ## Second, get non-target positions and use these for batch correction and alpha definitions
-        ####################################################################################################
-        ## Remove strand information from the refset; specifcally in the non-target positions. 
-        non_target_refset = {
-            pos: ctRCA.collapse_strand_counts(counts)
-            for pos, counts in non_target_positions.items()
-        }
-        ## Define alphas based on control refset data and test data (for batch correction)
-        dirichlet_alphas = Alphas.define_alphas(non_target_refset, Fasta(params['paths']['genome']))  ## Reference Set data for control samples is hardcoded in this script.
-  
-        ####################################################################################################
-        ## Third, Run Dirichlet Multinomal Monte-Carlo Simulations
-        ####################################################################################################
-        dmc_analyzer = dmc.VariantAnalyzer(vcf_df, dirichlet_alphas)
-        empirical_p_values = dmc_analyzer.run_analysis()
-        print(empirical_p_values)
-        ## Run Dirichlet Multinomial
-
-
+        basename = os.path.basename(file)
+        all_variants.to_csv(f'{params['paths']['output']}{os.path.splitext(basename)[0]}.tsv', sep='\t', index=False)
 
 
 if __name__ == '__main__':
@@ -157,7 +99,10 @@ if __name__ == '__main__':
     start_time = time.time()
 
     ## Clear terminal window:
-    os.system('cls' if platform.system() == 'Windows' else 'clear')
+    subprocess.run(
+        "cls" if os.name == "nt" else "clear",
+        shell=True
+    )
 
     ## Parse arguments and config
     args = parse_args()
@@ -168,7 +113,12 @@ if __name__ == '__main__':
     required_paths = [
         'bedfile',
         'genome',
-        'control_refset',
+        'snp_controls',
+        'snp_targets',
+        'del_controls',
+        'del_targets',
+        'ins_controls',
+        'ins_targets',
         'exon_bed',
         'cds_fasta',
         'cosmic_variants'
@@ -193,7 +143,11 @@ if __name__ == '__main__':
     if not final_config['paths']['output'].endswith('/'):
         final_config['paths']['output'] += '/'
 
-    ## Print user settings:
+    ## Make output dir if it doesnt exist
+    if not os.path.exists(config['paths']['output']):
+        os.mkdir(config['paths']['output'])
+
+    # Print user settings:
     print(f'---------------------------------------------------------------------------------')
     print(f'RCA Var: Variant caller for Consensus Sequence Rolling Circle Amplification Data')
     print(f'---------------------------------------------------------------------------------\n')
