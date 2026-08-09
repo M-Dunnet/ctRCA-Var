@@ -6,14 +6,10 @@ from scipy.special import digamma, polygamma
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+
 #########################
 ## GLOBALS 
 #########################
-
-FILE_PATHS = ["files/Ref0a_UMI1_pt2_reference_SNP_counts.json",
-              "files/Ref0a_UMI1_pt2_reference_SNP_counts.json",
-              "files/Ref0a_UMI1_pt2_reference_SNP_counts.json"]
-
 VALID_BASES = ['A', 'C', 'G', 'T']
 #########################
 
@@ -45,7 +41,7 @@ def _load_reference_file(file_path):
     }
 
 
-def _estimate_global_alphas(FILE_PATHS, VALID_BASES, genome):
+def _estimate_alphas(VALID_BASES, FILE_PATHS, genome):
     # 1. Pre-load all data into a 3D NumPy array: [File, Position, Base]
     # This avoids re-reading files for every locus.
     
@@ -66,24 +62,27 @@ def _estimate_global_alphas(FILE_PATHS, VALID_BASES, genome):
         ref_data = _load_reference_file(path)
         for l_idx, locus in enumerate(loci):
             pos_counts = ref_data.get(locus, {})
-            # Add +1 pseudocount here to match your 'build_initial_alphas' logic
-            counts_matrix[f_idx, l_idx, :] = [pos_counts.get(b, 0) + 1 for b in VALID_BASES]
-
-    # 2. Vectorized Math (Replaces build_initial_alphas)
-    # Kappa is the sum across bases: Shape (Files, Loci)
+            # Add + 1e-12 pseudocount here to match your 'build_initial_alphas' logic
+            counts_matrix[f_idx, l_idx, :] = [pos_counts.get(b, 0) + 1e-12 for b in VALID_BASES]    #1e-12
+    
+    
+    # # 2. Vectorized Math (Replaces build_initial_alphas)
+    # # Kappa is the sum across bases: Shape (Files, Loci)
     kappas = counts_matrix.sum(axis=2) 
-    median_depth = np.median([d for d in kappas.flatten() if d > 500])
+    median_depth = np.median([d for d in kappas.flatten() if d > 1000])
 
-    # Weight per file/batch: Kappa / Sum of Kappas across files
-    # Shape: (Files, Loci)
-    kappa_sums = kappas.sum(axis=0)
-    weights = kappas / kappa_sums[np.newaxis, :]
-    
-    # Apply weights and sum across files: Shape (Loci, Bases)
-    # We use broadcasting to multiply weights (F, L, 1) by counts (F, L, B)
-    weighted_counts = weights[:, :, np.newaxis] * counts_matrix
-    init_alphas = weighted_counts.sum(axis=0)
-    
+    depths = counts_matrix.sum(axis=2, keepdims=True)
+    proportions = counts_matrix / depths  # (Files, Loci, Bases)
+    mu = np.mean(proportions, axis=0)  # (Loci, Bases)
+    var = np.var(proportions, axis=0, ddof=1)  # (Loci, Bases)
+    # avoid division by zero / numerical issues
+    eps = 1e-12
+    var = np.clip(var, eps, None)
+    alpha0_per_base = (mu * (1 - mu)) / var - 1
+    alpha0 = np.median(alpha0_per_base, axis=1)  # (Loci,)
+    init_alphas = mu * alpha0[:, np.newaxis]  # (Loci, Bases)
+    init_alphas = np.clip(init_alphas, 1e-8, None)
+
     # 3. Aggregate by Reference Base
     global_alpha_p = defaultdict(list)
     base_to_idx = {base: i for i, base in enumerate(VALID_BASES)}
@@ -107,7 +106,7 @@ def _estimate_global_alphas(FILE_PATHS, VALID_BASES, genome):
         
         ## Check if any proportion in the "other" bases is > 0.01
         ## .any() returns True if at least one mismatch base is > 1%
-        if (alpha_p[other_indices] > 0.01).any():   
+        if (alpha_p[other_indices] > 0.005).any():   
             continue
         
         ## Convert back to dict for existing downstream logic
@@ -140,7 +139,7 @@ def _estimate_global_alphas(FILE_PATHS, VALID_BASES, genome):
         global_alpha = [mean_kappa * p for p in means.values()]
         gbl_alpha[base] = global_alpha
 
-    return gbl_alpha, median_depth
+    return gbl_alpha, init_alphas, median_depth
 
 
 def _calculate_test_errs(test_dict, genome):
@@ -159,7 +158,7 @@ def _calculate_test_errs(test_dict, genome):
         [v.get(base, 0) for base in VALID_BASES]
         for _, v in items
     ])
-    ## TODO in here need to filter my positions to only include non-variant positions
+
     counts_by_ref = defaultdict(list)
     counts_by_ref = {       ## Collect all positions into groups by referce base, then calcualte proportions of each base
         base: np.array([
@@ -177,7 +176,7 @@ def _calculate_test_errs(test_dict, genome):
     return mean_by_ref
 
 
-def _shrink_position_alphas(FILE_PATHS, VALID_BASES, global_alphas, median_depth, genome):
+def _shrink_position_alphas(VALID_BASES, FILE_PATHS, global_alphas, init_alphas, median_depth, genome):
     """
     Shrinks position specific alphas towards the global alpha for each reference base.
     Shrinkage is based on emperical calcualtion, where:
@@ -188,33 +187,11 @@ def _shrink_position_alphas(FILE_PATHS, VALID_BASES, global_alphas, median_depth
     first_ref = _load_reference_file(FILE_PATHS[0])
     loci = list(first_ref.keys())
 
-    num_files = len(FILE_PATHS)
-    num_loci = len(loci)
-    num_bases = len(VALID_BASES)
-
-    counts_matrix = np.zeros((num_files, num_loci, num_bases))
-
-    for f_idx, path in enumerate(FILE_PATHS):
-        ref_data = _load_reference_file(path)
-        for l_idx, locus in enumerate(loci):
-            pos_counts = ref_data.get(locus, {})
-            counts_matrix[f_idx, l_idx, :] = [pos_counts.get(b,0)+1 for b in VALID_BASES]
-
-    ## Same weighting logic
-    kappas = counts_matrix.sum(axis=2)
-    kappa_sums = kappas.sum(axis=0)
-    weights = kappas / kappa_sums[np.newaxis,:]
-
-    weighted_counts = weights[:,:,np.newaxis] * counts_matrix
-    init_alphas = weighted_counts.sum(axis=0)
-
     ## Tau is how much weight we give the global alphas compared to position
     ## Currently set to 4% of median value
     tau = median_depth * 0.04    
 
     final_alphas = {}
-    print("Applying shrinkage...")
-
     for l_idx, locus in enumerate(loci):
 
         chromosome, pos_str = locus.rsplit('_',1)
@@ -223,126 +200,37 @@ def _shrink_position_alphas(FILE_PATHS, VALID_BASES, global_alphas, median_depth
         alpha_pos = init_alphas[l_idx]
         depth = alpha_pos.sum()
         gamma = depth / (depth + tau)   ## The lower the position depth, the more we rely on the global, and vice versa
+        
         alpha_gbl = np.array(global_alphas[ref_base])
         if alpha_gbl.size == 0:
             alpha_fin = alpha_pos
         else:
-            alpha_fin = gamma * alpha_pos + (1-gamma) * alpha_gbl
-        final_alphas[locus] = alpha_fin
+            alpha_fin = (gamma * alpha_pos) + ((1-gamma) * alpha_gbl)
+
+        final_alphas[locus] = alpha_fin #* 2
 
     return final_alphas
 
 
-def _plot_tau_histograms(FILE_PATHS, VALID_BASES, genome, global_alphas, median_depth, tau_factors, bins=1):
-    """
-    Plot outline-only density histograms of alpha distributions.
-    - No fill (step lines only)
-    - Independent y-axis per subplot
-    """
 
-    # --- Build initial alphas ---
-    first_ref = _load_reference_file(FILE_PATHS[0])
-    loci = list(first_ref.keys())
-
-    num_files = len(FILE_PATHS)
-    num_loci = len(loci)
-    num_bases = len(VALID_BASES)
-
-    counts_matrix = np.zeros((num_files, num_loci, num_bases))
-
-    for f_idx, path in enumerate(FILE_PATHS):
-        ref_data = _load_reference_file(path)
-        for l_idx, locus in enumerate(loci):
-            pos_counts = ref_data.get(locus, {})
-            counts_matrix[f_idx, l_idx, :] = [pos_counts.get(b, 0) + 1 for b in VALID_BASES]
-
-    kappas = counts_matrix.sum(axis=2)
-    weights = kappas / kappas.sum(axis=0, keepdims=True)
-
-    weighted_counts = weights[:, :, np.newaxis] * counts_matrix
-    init_alphas = weighted_counts.sum(axis=0)
-
-    # --- Group loci by reference base ---
-    ref_groups = defaultdict(list)
-
-    for l_idx, locus in enumerate(loci):
-        chromosome, pos_str = locus.rsplit('_', 1)
-        ref_base = str(genome[chromosome][int(pos_str) - 1]).upper()
-        ref_groups[ref_base].append(l_idx)
-
-    # --- Plot ---
-    for ref_base, indices in ref_groups.items():
-
-        fig, axes = plt.subplots(1, len(VALID_BASES), figsize=(5 * len(VALID_BASES), 4))
-
-        # Ensure axes is iterable if only one base
-        if len(VALID_BASES) == 1:
-            axes = [axes]
-
-        for b_idx, base in enumerate(VALID_BASES):
-            if ref_base != base:
-                x_cap = 50
-                bins = 1
-            else: 
-                x_cap = 6000
-                bins = 200
-            ax = axes[b_idx]
-
-            # --- Each tau ---
-            for tau_factor in tau_factors:
-                tau = median_depth * tau_factor
-                vals = []
-
-                for l_idx in indices:
-                    alpha_pos = init_alphas[l_idx]
-                    depth = alpha_pos.sum()
-                    gamma = depth / (depth + tau)
-
-                    alpha_gbl = np.array(global_alphas[ref_base])
-
-                    if alpha_gbl.size == 0:
-                        alpha_fin = alpha_pos
-                    else:
-                        alpha_fin = gamma * alpha_pos + (1 - gamma) * alpha_gbl
-
-                    vals.append(alpha_fin[b_idx])
-
-                sns.histplot(
-                    vals,
-                    binwidth=bins,
-                    element='step',
-                    fill=True,
-                    linewidth=1,
-                    label=f"τ={median_depth * tau_factor:.2f}",
-                    ax=ax,
-                    alpha=0.05
-                )
-                ax.set_xlim(0, x_cap)
-            
-            ax.set_xlabel(f"Alpha value")
-            ax.set_title(f"{ref_base} → {base}")
-            ax.set_ylabel("Density")
-            ax.legend()
-
-        plt.suptitle(f"Alpha Distributions (Outline Histograms) for Reference Base {ref_base}")
-        plt.tight_layout()
-        plt.savefig(f'TestingTau2{ref_base}.png')
-
-
-def define_alphas(test_refset, genome, plt_tau=False):
+def define_alphas(test_refset, genome, snp_controls):
     """
     Runs the entire script:
     - Loads files
-    - Gets reference alphas for each position (counts + 1), for each reference file
+    - Gets reference alphas for each position (counts + 1e-12), for each reference file
     - Weights reference files by depth per position; combines alphas from each reference by weighting
     - Defines global alpha-values for each reference base [ACGT]
     - Gets mean error rates of the test file for each reference base [ACGT]
     - Shifts global alphas such that the mean matches the test file
     - Shrinks position-speicifc alphas towards the mean based on position specific depth. 
     """
-    ## Calculate Glboal Alphas for each base postion
-    gbl_alpha_ref, median_depth_ref = _estimate_global_alphas(FILE_PATHS, VALID_BASES, genome)
+    with open(snp_controls, "r") as f:
+        control_files = json.load(f)
+    file_paths = [value for value in control_files.values()]
 
+    ## Calculate Glboal Alphas for each base postion
+    gbl_alpha_ref, position_alphas, median_depth_ref = _estimate_alphas(VALID_BASES, file_paths, genome)
+    
     ## Calcualte the mean error rate of the test sample per reference base (mean by reference)    
     mbr = _calculate_test_errs(test_refset, genome)
 
@@ -357,23 +245,12 @@ def define_alphas(test_refset, genome, plt_tau=False):
 
     ## Shrink alphas towards the mean based on emperical shrinkage data
     final_alphas = _shrink_position_alphas(
-        FILE_PATHS, 
-        VALID_BASES, 
-        adjusted_global_alphas, 
+        VALID_BASES,
+        file_paths, 
+        adjusted_global_alphas,
+        position_alphas, 
         median_depth_ref, 
         genome
     )
 
-    ## Optional Plot Shrinkage for new alphas.                            
-    if plt_tau:
-        tau_factors = [0, 0.04]
-        _plot_tau_histograms(
-            FILE_PATHS,
-            VALID_BASES,
-            genome,
-            adjusted_global_alphas,
-            median_depth_ref,
-            tau_factors
-        )
-        
     return final_alphas

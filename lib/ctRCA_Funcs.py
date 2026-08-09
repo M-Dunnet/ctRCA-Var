@@ -2,7 +2,7 @@ import json
 import csv
 import pandas as pd
 import ast
-
+from pyfaidx import Fasta
 
 def config_reader(config_in="files/config.json"):
     """
@@ -50,7 +50,7 @@ def split_refset_dict(reference_dict, csv_file): ## TODO This should probably be
     "<chrom>_<pos>" (e.g., "NC_000017.11_58415591"), and values as nested
     dictionaries of base counts. Built from ReferenceSet module.
 
-    The CSV file must contain 'chrom' and 'pos' columns. Positions are matched
+    The CSV file must contain 'Chromosome' and 'Start.Position' columns. Positions are matched
     by separating each reference key into contig and position, and comparing
     against the (chrom, pos) pairs from the CSV.
     """
@@ -60,8 +60,8 @@ def split_refset_dict(reference_dict, csv_file): ## TODO This should probably be
     with open(csv_file, newline='') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            chrom = row['chrom']
-            pos = row['pos']
+            chrom = row['Chromosome']
+            pos = row['Start.Position']
             csv_positions.add((chrom, pos))
 
     ## Split the dictionary
@@ -113,7 +113,7 @@ def counts_to_proportions(counts):  ## TODO This should probably be an import?
     }
 
 
-def refset_dict_to_vcf(test_refset, genome):       ## TODO This should probably be an import?
+def refset_dict_to_vcf(test_refset, genome_path):       ## TODO This should probably be an import?
     """
     Convert collapsed reference dictionary into a long-format DataFrame.
 
@@ -129,6 +129,7 @@ def refset_dict_to_vcf(test_refset, genome):       ## TODO This should probably 
     pd.DataFrame
         Columns: Contig, Position, Ref, Alt, Depth, Alt_Count, Alt_Prop
     """
+    genome = Fasta(genome_path)
     rows = []
     for key, counts in test_refset.items():
         # Split key
@@ -198,3 +199,4 @@ def annotate_gene(row, bed_df):
         return match["Gene"].values[0]  ## take first match
     
     return None
+

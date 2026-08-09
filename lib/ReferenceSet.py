@@ -45,7 +45,7 @@ class ReferenceSetBase(ABC):
         bed_regions.sort()
 
         for i, (chrom, start, end) in enumerate(bed_regions, start=1):
-            print(f"\tBuilding reference set... Working on region {i} of {len(bed_regions)} - {round(i/len(bed_regions) * 100, 2)}% ({chrom}:{start}-{end})", ' ' * 10, end='\r')
+            print(f"\t\tBuilding reference set... Working on region {i} of {len(bed_regions)} - {round(i/len(bed_regions) * 100, 2)}% ({chrom}:{start}-{end})", ' ' * 10, end='\r')
             for pileupcolumn in samfile.pileup(chrom, start, end, max_depth=25000, truncate=True): 
 
                 chromosome = pileupcolumn.reference_name
@@ -118,15 +118,6 @@ class ReferenceSetBase(ABC):
 
         return consensus_dict
     
-    def filter_positions(self):  # This will need changing if I want to preserve the original JSON file
-        for location in list(self.reference_set.keys()):
-            chrom, position = location.rsplit('_', 1)
-            if self.exclude is not None and any(
-                    exclude_chrom == pileupcolumn.reference_name and exclude_start <= pileupcolumn.pos + 1 <= exclude_end
-                    for exclude_chrom, exclude_start, exclude_end in self.exclude
-                ):
-                    continue
-    
 
 class SNP_ReferenceSet(ReferenceSetBase):
     """Handles SNP reference set generation."""
@@ -158,9 +149,9 @@ class Del_ReferenceSet(ReferenceSetBase):
         """Extracts deletion event from pileup read."""
         aln = pileupread.alignment
         if aln.is_supplementary or aln.is_secondary:
-            return None, None
+            return None, None, None
         if pileupread.is_refskip or pileupread.is_del:
-            return None, None
+            return None, None, None
         if pileupread.query_position is None:
             return None, None, None
         if aln.is_forward:
@@ -170,6 +161,7 @@ class Del_ReferenceSet(ReferenceSetBase):
         if pileupread.indel < 0:  # Deletion event
             deletion_length = -pileupread.indel
             return position + 1, str(self.genome[chromosome][position:position + deletion_length]).upper(), strand
+
         return position + 1, '.', strand
 
     def _get_consensus_base(self, sequence_dict, chrom, position): 
