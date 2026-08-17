@@ -23,7 +23,7 @@ class INDEL_Analyzer:
         min_depth=500,
         min_alt_count=5,
         min_alt_freq=0.001,
-        pval_threshold=0.05
+        pval_threshold=1.0
     ):
         ## Configuration & Parameters
         self.target_deletions_path = target_indels
@@ -158,8 +158,8 @@ class INDEL_Analyzer:
         ran_beta = np.random.beta(alpha_value, beta_value, self.nn)
         ran_idx = np.random.binomial(alt_depth, ran_beta)
 
-        # Bug fix: Divide by self.nn to get a true p-value (probability), not an integer count
-        pval = np.sum(ran_idx + 1 >= alt_idx + 1) / self.nn
+        k = np.sum(ran_idx >= alt_idx)
+        pval = (k + 1) / (self.nn + 1)
         return pval
 
     def _select_alt_allele(self, position, obs_data):
